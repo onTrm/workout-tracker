@@ -588,7 +588,11 @@ def main():
     folder_id = get_or_create_app_folder(drive_service)
     data_file_id = get_or_create_data_file(drive_service, folder_id)
 
-    if "data" not in st.session_state:
+    # Load data from Drive when the session has no data yet, or when the
+    # data_file_id differs from what's stored in session (e.g. user logged
+    # in on a new device). This ensures users see their saved JSON rather
+    # than only ephemeral cached state.
+    if ("data" not in st.session_state) or (st.session_state.get("data_file_id") != data_file_id):
         st.session_state["data"] = load_user_data(drive_service, data_file_id)
         st.session_state["data_file_id"] = data_file_id
         st.session_state["folder_id"] = folder_id
