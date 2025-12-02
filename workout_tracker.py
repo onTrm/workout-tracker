@@ -114,33 +114,37 @@ def apply_custom_style():
             div[data-baseweb="slider"] {
                 max-width: 6.5rem !important;
             }
-            /* Exercise card styling for stacked/mobile logger */
+            /* Exercise card styling for stacked/mobile logger. */
+            /* Use Streamlit expanders for grouping (handled in Python). Keep styling conservative so it fits both light/dark themes. */
             .exercise-card {
-                border: 1px solid #e6e6e6;
                 border-radius: 8px;
-                background: #f8f9fa;
-                padding: 0.6rem 0.8rem;
-                margin-bottom: 0.6rem;
+                padding: 0.45rem 0.6rem;
+                margin-bottom: 0.5rem;
+                box-sizing: border-box;
             }
-                .exercise-card h3 { margin: 0 0 0.4rem 0; padding: 0; font-size: 1.05rem; }
-                /* Ensure inputs inside cards are wide and usable on mobile */
-                .exercise-card input[type="number"], .exercise-card .stNumberInput input,
-                .exercise-card input, .exercise-card .stNumberInput {
-                    width: 100% !important;
-                    min-width: 0 !important;
-                    max-width: none !important;
+                .exercise-card h3 { margin: 0 0 0.35rem 0; padding: 0; font-size: 1.05rem; }
+                /* Make number inputs layout-friendly: let the input flex so +/- step buttons stay visible */
+                div[data-baseweb="numberinput"], div[data-testid="stNumberInput"] {
+                    display: flex !important;
+                    align-items: center !important;
+                    gap: 0.35rem !important;
+                }
+                div[data-baseweb="numberinput"] input, div[data-testid="stNumberInput"] input {
+                    flex: 1 1 auto !important;
+                    width: auto !important;
+                    min-width: 3.2rem !important;
                     box-sizing: border-box !important;
-                    padding: 0.35rem 0.4rem !important;
+                    padding: 0.28rem 0.36rem !important;
                     font-size: 1rem !important;
-                    -webkit-appearance: textfield !important; /* iOS Safari: make inputs render consistently */
                 }
-                /* Hide native spin buttons if they get in the way, but retain keyboard input on mobile */
-                .exercise-card input[type=number]::-webkit-outer-spin-button,
-                .exercise-card input[type=number]::-webkit-inner-spin-button {
-                    -webkit-appearance: none !important;
-                    margin: 0 !important;
+                /* Ensure stepper buttons are visible and tappable on mobile */
+                div[data-baseweb="numberinput"] button, div[data-testid="stNumberInput"] button {
+                    min-width: 2.1rem !important;
+                    height: auto !important;
+                    padding: 0.18rem 0.3rem !important;
                 }
-                .exercise-card .stSlider > div { width: 100% !important; }
+                /* Keep sliders full width where appropriate */
+                .stSlider > div, div[data-baseweb="slider"] { width: 100% !important; }
             /* Sidebar nav larger buttons */
             section[data-testid="stSidebar"] .stButton > button {
                 font-size: 1.05rem !important;
@@ -620,18 +624,13 @@ def logger_page(data):
     mobile_layout = st.session_state.get("logger_card_layout", True)
 
     if mobile_layout:
-        # Stacked card layout: each exercise gets its own card with labels above inputs
+        # Stacked layout: use Streamlit expanders so widgets are grouped reliably
         for ex in todays_exs:
-            # Open card container so the following inputs are inside it (so CSS applies)
-            st.markdown("<div class='exercise-card'>", unsafe_allow_html=True)
-            st.markdown(f"<h3>{ex}</h3>", unsafe_allow_html=True)
-            # stacked inputs with visible labels for clarity on mobile — keep inputs inside the card
-            st.number_input("Weight", min_value=0.0, step=1.0, key=f"{log_date_iso}_{ex}_weight")
-            st.number_input("Reps", min_value=0, step=1, key=f"{log_date_iso}_{ex}_reps")
-            st.number_input("Sets", min_value=0, step=1, key=f"{log_date_iso}_{ex}_sets")
-            st.slider("RPE", min_value=1, max_value=10, value=7, key=f"{log_date_iso}_{ex}_rpe")
-            # Close card container
-            st.markdown("</div>", unsafe_allow_html=True)
+            with st.expander(ex, expanded=True):
+                st.number_input("Weight", min_value=0.0, step=1.0, key=f"{log_date_iso}_{ex}_weight")
+                st.number_input("Reps", min_value=0, step=1, key=f"{log_date_iso}_{ex}_reps")
+                st.number_input("Sets", min_value=0, step=1, key=f"{log_date_iso}_{ex}_sets")
+                st.slider("RPE", min_value=1, max_value=10, value=7, key=f"{log_date_iso}_{ex}_rpe")
             st.markdown("&nbsp;")
     else:
         # Header row for inputs (display once)
