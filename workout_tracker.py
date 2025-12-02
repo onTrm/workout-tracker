@@ -88,16 +88,21 @@ def apply_custom_style():
                 width: 100% !important;
                 overflow-x: auto;
             }
-            /* Stack Streamlit columns vertically on narrow screens */
-            /* Targets the column wrapper produced by st.columns */
-            div[data-testid="column"] {
-                min-width: 100% !important;
-                display: block !important;
+            /* Do not force all columns to stack; instead make inputs inline-friendly */
+            /* Make number inputs and their +/- buttons render inline */
+            div[data-baseweb="numberinput"] {
+                display: flex !important;
+                flex-direction: row !important;
+                align-items: center !important;
+                gap: 0.25rem !important;
             }
-            /* Fallback: target common Streamlit column wrapper classes */
-            .stColumns > div {
-                min-width: 100% !important;
-                display: block !important;
+            div[data-baseweb="numberinput"] input {
+                width: 4.2rem !important;
+                min-width: 3.5rem !important;
+            }
+            /* Make sliders compact */
+            div[data-baseweb="slider"] {
+                max-width: 6.5rem !important;
             }
         }
         </style>
