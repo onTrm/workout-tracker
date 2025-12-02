@@ -89,16 +89,26 @@ def apply_custom_style():
                 overflow-x: auto;
             }
             /* Do not force all columns to stack; instead make inputs inline-friendly */
-            /* Make number inputs and their +/- buttons render inline */
-            div[data-baseweb="numberinput"] {
-                display: flex !important;
+            /* Make number inputs and their +/- buttons render inline and limit width */
+            div[data-baseweb="numberinput"], div[data-testid="stNumberInput"] {
+                display: inline-flex !important;
                 flex-direction: row !important;
                 align-items: center !important;
                 gap: 0.25rem !important;
             }
-            div[data-baseweb="numberinput"] input {
-                width: 4.2rem !important;
-                min-width: 3.5rem !important;
+            /* Broad selector: target all numeric inputs Streamlit may render */
+            input[type="number"], div[data-baseweb="numberinput"] input, div[data-testid="stNumberInput"] input {
+                width: 4.4rem !important;
+                min-width: 3.2rem !important;
+                max-width: 5.5rem !important;
+                box-sizing: border-box !important;
+                padding: 0.18rem 0.25rem !important;
+                font-size: 0.95rem !important;
+            }
+            /* Fallback selectors for Streamlit's internal classes */
+            .stNumberInput, .stNumberInput input {
+                display: inline-flex !important;
+                width: auto !important;
             }
             /* Make sliders compact */
             div[data-baseweb="slider"] {
