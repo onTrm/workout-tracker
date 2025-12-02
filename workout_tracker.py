@@ -339,20 +339,14 @@ def planner_page(data, exercise_options):
             st.markdown(f"**{day}**")
         with col_right:
             default_list = weekly_template.get(day, [])
+            # Only allow selection from the exercise DB (no free-text 'other' items)
             selected = st.multiselect(
                 f"Exercises for {day}",
                 options=exercise_options,
                 default=default_list,
                 key=f"week_{day}",
             )
-            other = st.text_input(
-                f"Other items for {day} (comma-separated, e.g. rest, basketball)",
-                value="",
-                key=f"week_{day}_other",
-            )
-            extras = [x.strip() for x in other.split(",") if x.strip()]
-            full_list = list(selected) + extras
-            weekly_template[day] = full_list
+            weekly_template[day] = list(selected)
 
     # Build per-date workout mapping from weekly template
     workouts = {}
@@ -463,59 +457,86 @@ def logger_page(data):
 
     logs = data["logs"]
 
-    # One row per exercise: name + weight/reps/sets/RPE + button
+    # Header row for inputs (display once)
+    header_cols = st.columns([3, 1.5, 1, 1, 1])
+    header_cols[0].markdown("**Exercise**")
+    header_cols[1].markdown("**Weight**")
+    header_cols[2].markdown("**Reps**")
+    header_cols[3].markdown("**Sets**")
+    header_cols[4].markdown("**RPE**")
+
+    # One row per exercise: name inline + input boxes (no per-row labels)
     for ex in todays_exs:
-        row = st.columns([2, 1, 1, 1, 1, 1])
+        row = st.columns([3, 1.5, 1, 1, 1])
         with row[0]:
             st.markdown(f"**{ex}**")
         with row[1]:
-            weight = st.number_input(
-                "Weight",
+            # weight as float
+            st.number_input(
+                "",
                 min_value=0.0,
                 step=1.0,
                 key=f"{log_date_iso}_{ex}_weight",
+                label_visibility="collapsed",
             )
         with row[2]:
-            reps = st.number_input(
-                "Reps",
+            st.number_input(
+                "",
                 min_value=0,
                 step=1,
                 key=f"{log_date_iso}_{ex}_reps",
+                label_visibility="collapsed",
             )
         with row[3]:
-            sets = st.number_input(
-                "Sets",
+            st.number_input(
+                "",
                 min_value=0,
                 step=1,
                 key=f"{log_date_iso}_{ex}_sets",
+                label_visibility="collapsed",
             )
         with row[4]:
-            rpe = st.slider(
-                "RPE",
+            st.slider(
+                "",
                 min_value=1,
                 max_value=10,
                 value=7,
                 key=f"{log_date_iso}_{ex}_rpe",
+                label_visibility="collapsed",
             )
-        with row[5]:
-            if st.button("Log", key=f"{log_date_iso}_{ex}_add"):
-                if reps <= 0 or sets <= 0:
-                    st.warning("Reps and sets must be > 0.")
-                else:
-                    volume = float(weight) * int(reps) * int(sets)
-                    entry = {
-                        "date": log_date_iso,
-                        "plan": active_plan_name,
-                        "exercise": ex,
-                        "weight": float(weight),
-                        "reps": int(reps),
-                        "sets": int(sets),
-                        "rpe": int(rpe),
-                        "volume": volume,
-                    }
-                    logs.append(entry)
-                    data["logs"] = logs
-                    st.success(f"Logged {ex}.")
+
+    # Single action button for logging all non-empty rows
+    if st.button("Log selected sets"):
+        any_saved = False
+        for ex in todays_exs:
+            w = st.session_state.get(f"{log_date_iso}_{ex}_weight", 0.0)
+            r = st.session_state.get(f"{log_date_iso}_{ex}_reps", 0)
+            s = st.session_state.get(f"{log_date_iso}_{ex}_sets", 0)
+            rp = st.session_state.get(f"{log_date_iso}_{ex}_rpe", 7)
+
+            # Only save fully-filled entries (>0 for weight, reps, sets)
+            if float(w) > 0 and int(r) > 0 and int(s) > 0:
+                volume = float(w) * int(r) * int(s)
+                entry = {
+                    "date": log_date_iso,
+                    "plan": active_plan_name,
+                    "exercise": ex,
+                    "weight": float(w),
+                    "reps": int(r),
+                    "sets": int(s),
+                    "rpe": int(rp),
+                    "volume": volume,
+                }
+                # Remove any existing entry for same date+exercise, then append
+                logs = [le for le in logs if not (le.get("date") == log_date_iso and le.get("exercise") == ex)]
+                logs.append(entry)
+                data["logs"] = logs
+                any_saved = True
+
+        if any_saved:
+            st.success("Saved completed sets.")
+        else:
+            st.info("No complete entries to save (weight/reps/sets must be > 0).")
 
     st.markdown("---")
     st.subheader("Training history")
