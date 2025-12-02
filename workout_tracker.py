@@ -692,7 +692,7 @@ def logger_page(data):
                     st.markdown("RPE")
                 with rpe_cols[1]:
                     st.session_state.setdefault(f"{log_date_iso}_{ex}_rpe", 7)
-                        st.slider("", min_value=1, max_value=10, value=st.session_state.get(f"{log_date_iso}_{ex}_rpe", 7), key=f"{log_date_iso}_{ex}_rpe")
+                    st.slider("", min_value=1, max_value=10, value=st.session_state.get(f"{log_date_iso}_{ex}_rpe", 7), key=f"{log_date_iso}_{ex}_rpe")
             st.markdown("&nbsp;")
     else:
         # Header row for inputs (display once)
