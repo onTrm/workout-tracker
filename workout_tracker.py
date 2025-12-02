@@ -122,17 +122,25 @@ def apply_custom_style():
                 padding: 0.6rem 0.8rem;
                 margin-bottom: 0.6rem;
             }
-            .exercise-card h3 { margin: 0 0 0.4rem 0; padding: 0; font-size: 1.05rem; }
-            /* Ensure inputs inside cards are wide and usable on mobile */
-            .exercise-card input[type="number"], .exercise-card .stNumberInput input {
-                width: 100% !important;
-                min-width: 0 !important;
-                max-width: none !important;
-                box-sizing: border-box !important;
-                padding: 0.35rem 0.4rem !important;
-                font-size: 1rem !important;
-            }
-            .exercise-card .stSlider > div { width: 100% !important; }
+                .exercise-card h3 { margin: 0 0 0.4rem 0; padding: 0; font-size: 1.05rem; }
+                /* Ensure inputs inside cards are wide and usable on mobile */
+                .exercise-card input[type="number"], .exercise-card .stNumberInput input,
+                .exercise-card input, .exercise-card .stNumberInput {
+                    width: 100% !important;
+                    min-width: 0 !important;
+                    max-width: none !important;
+                    box-sizing: border-box !important;
+                    padding: 0.35rem 0.4rem !important;
+                    font-size: 1rem !important;
+                    -webkit-appearance: textfield !important; /* iOS Safari: make inputs render consistently */
+                }
+                /* Hide native spin buttons if they get in the way, but retain keyboard input on mobile */
+                .exercise-card input[type=number]::-webkit-outer-spin-button,
+                .exercise-card input[type=number]::-webkit-inner-spin-button {
+                    -webkit-appearance: none !important;
+                    margin: 0 !important;
+                }
+                .exercise-card .stSlider > div { width: 100% !important; }
             /* Sidebar nav larger buttons */
             section[data-testid="stSidebar"] .stButton > button {
                 font-size: 1.05rem !important;
@@ -614,12 +622,16 @@ def logger_page(data):
     if mobile_layout:
         # Stacked card layout: each exercise gets its own card with labels above inputs
         for ex in todays_exs:
-            st.markdown(f"<div class='exercise-card'><h3>{ex}</h3></div>", unsafe_allow_html=True)
-            # stacked inputs with visible labels for clarity on mobile
+            # Open card container so the following inputs are inside it (so CSS applies)
+            st.markdown("<div class='exercise-card'>", unsafe_allow_html=True)
+            st.markdown(f"<h3>{ex}</h3>", unsafe_allow_html=True)
+            # stacked inputs with visible labels for clarity on mobile — keep inputs inside the card
             st.number_input("Weight", min_value=0.0, step=1.0, key=f"{log_date_iso}_{ex}_weight")
             st.number_input("Reps", min_value=0, step=1, key=f"{log_date_iso}_{ex}_reps")
             st.number_input("Sets", min_value=0, step=1, key=f"{log_date_iso}_{ex}_sets")
             st.slider("RPE", min_value=1, max_value=10, value=7, key=f"{log_date_iso}_{ex}_rpe")
+            # Close card container
+            st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("&nbsp;")
     else:
         # Header row for inputs (display once)
