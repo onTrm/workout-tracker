@@ -37,6 +37,36 @@ SCOPES = [
 
 
 # ---------------------------------------------------------------------
+# Styling helpers
+# ---------------------------------------------------------------------
+
+def apply_custom_style():
+    """Inject a bit of custom CSS for tighter, nicer layout."""
+    st.markdown(
+        """
+        <style>
+        /* Make the main container a bit wider */
+        .block-container {
+            max-width: 1100px;
+            padding-top: 1.5rem;
+        }
+        /* General button styling */
+        .stButton > button {
+            border-radius: 0.5rem;
+            padding: 0.25rem 0.9rem;
+            font-size: 0.9rem;
+        }
+        /* Sidebar title spacing */
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 1rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------
 # OAuth helpers
 # ---------------------------------------------------------------------
 
@@ -67,8 +97,7 @@ def get_flow(state=None):
 
 def get_user_info(creds: Credentials):
     # Use OAuth2 userinfo endpoint
-    from googleapiclient.discovery import build as build_oauth2
-    oauth2_service = build_oauth2("oauth2", "v2", credentials=creds)
+    oauth2_service = build("oauth2", "v2", credentials=creds)
     user_info = oauth2_service.userinfo().get().execute()
     return user_info  # contains "email", "id", etc.
 
@@ -239,11 +268,11 @@ def load_exercise_db(path: str):
 
 
 # ---------------------------------------------------------------------
-# Planner UI
+# Planner UI (weekly timetable)
 # ---------------------------------------------------------------------
 
 def planner_page(data, exercise_options):
-    st.header("Workout Planner")
+    st.header("Workout Planner – Weekly Timetable")
 
     plans = data["plans"]
 
@@ -251,16 +280,21 @@ def planner_page(data, exercise_options):
     editing_name = st.session_state.get("edit_plan_name")
     editing_plan = plans.get(editing_name) if editing_name else None
 
+    # Derive defaults
     if editing_plan:
         default_name = editing_name
         default_start_date = date.fromisoformat(editing_plan["start_date"])
-        default_days = editing_plan.get("num_days", 28)
+        # Prefer explicit num_weeks if present, else infer from num_days
+        default_weeks = editing_plan.get("num_weeks")
+        if default_weeks is None:
+            num_days = editing_plan.get("num_days", 7)
+            default_weeks = max(1, int(num_days) // 7)
     else:
         default_name = ""
         default_start_date = date.today()
-        default_days = 28
+        default_weeks = 4  # 4-week block as default
 
-    st.subheader("Create or edit plan")
+    st.subheader("Create or edit weekly plan")
 
     plan_name = st.text_input("Plan name", value=default_name)
 
@@ -268,31 +302,68 @@ def planner_page(data, exercise_options):
     with c1:
         start_date = st.date_input("Start date", value=default_start_date)
     with c2:
-        num_days = st.number_input(
-            "Duration (days)", min_value=1, step=1, value=default_days
+        num_weeks = st.number_input(
+            "Duration (weeks)",
+            min_value=1,
+            step=1,
+            value=default_weeks,
         )
 
-    st.markdown("#### Daily workouts")
+    st.markdown("#### Weekly timetable")
+    st.caption(
+        "Define what you do on each weekday. The same weekly schedule will repeat "
+        "for the selected number of weeks starting from the start date."
+    )
 
+    # Build / infer weekly template
+    weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    weekly_template = {day: [] for day in weekday_names}
+
+    # If editing an existing plan, infer per-weekday defaults from stored workouts
+    if editing_plan:
+        stored_workouts = editing_plan.get("workouts", {})
+        for offset in range(0, editing_plan.get("num_days", int(default_weeks) * 7)):
+            d = default_start_date + timedelta(days=offset)
+            iso = d.isoformat()
+            if iso in stored_workouts:
+                wd = d.strftime("%A")
+                # Only take the first example we find for that weekday
+                if not weekly_template[wd]:
+                    weekly_template[wd] = stored_workouts[iso]
+
+    # UI for weekly template
+    for day in weekday_names:
+        # Layout days in two columns for nicer use of space
+        col_left, col_right = st.columns([1, 2])
+        with col_left:
+            st.markdown(f"**{day}**")
+        with col_right:
+            default_list = weekly_template.get(day, [])
+            selected = st.multiselect(
+                f"Exercises for {day}",
+                options=exercise_options,
+                default=default_list,
+                key=f"week_{day}",
+            )
+            other = st.text_input(
+                f"Other items for {day} (comma-separated, e.g. rest, basketball)",
+                value="",
+                key=f"week_{day}_other",
+            )
+            extras = [x.strip() for x in other.split(",") if x.strip()]
+            full_list = list(selected) + extras
+            weekly_template[day] = full_list
+
+    # Build per-date workout mapping from weekly template
     workouts = {}
-    for i in range(int(num_days)):
-        day_date = start_date + timedelta(days=i)
-        day_iso = day_date.isoformat()
-        label = f"{day_date.strftime('%a')} – {day_iso}"
-
-        if editing_plan:
-            default_day_exs = editing_plan.get("workouts", {}).get(day_iso, [])
-        else:
-            default_day_exs = []
-
-        selected = st.multiselect(
-            label,
-            options=exercise_options,
-            default=default_day_exs,
-            key=f"day_{day_iso}",
-        )
-        if selected:
-            workouts[day_iso] = selected
+    total_days = int(num_weeks) * 7
+    for i in range(total_days):
+        d = start_date + timedelta(days=i)
+        iso = d.isoformat()
+        wd = d.strftime("%A")
+        day_exs = weekly_template.get(wd, [])
+        if day_exs:
+            workouts[iso] = day_exs
 
     save_col, cancel_col = st.columns(2)
 
@@ -307,12 +378,13 @@ def planner_page(data, exercise_options):
                 plans[plan_name] = {
                     "name": plan_name,
                     "start_date": start_date.isoformat(),
-                    "num_days": int(num_days),
+                    "num_weeks": int(num_weeks),
+                    "num_days": int(num_weeks) * 7,
                     "workouts": workouts,
                 }
                 data["plans"] = plans
                 st.session_state["edit_plan_name"] = None
-                st.success("Plan updated in memory. Remember to save to Drive (top bar).")
+                st.success("Plan updated in memory. Remember to save to Drive (sidebar).")
 
     with cancel_col:
         if st.button("Cancel editing"):
@@ -331,7 +403,11 @@ def planner_page(data, exercise_options):
     if selected_name:
         p = plans[selected_name]
         st.markdown(f"**Start date:** {p['start_date']}")
-        st.markdown(f"**Duration:** {p['num_days']} days")
+        # Prefer num_weeks if present
+        num_weeks_display = p.get("num_weeks")
+        if num_weeks_display is None:
+            num_weeks_display = max(1, int(p.get("num_days", 7)) // 7)
+        st.markdown(f"**Duration:** {num_weeks_display} week(s)")
 
         rows = [
             {"Date": d, "Exercises": ", ".join(exs)}
@@ -339,7 +415,7 @@ def planner_page(data, exercise_options):
         ]
         if rows:
             df_plan = pd.DataFrame(rows).sort_values("Date")
-            st.dataframe(df_plan, use_container_width=True)
+            st.dataframe(df_plan, use_container_width=True, height=260)
 
         c1, c2 = st.columns(2)
         with c1:
@@ -366,39 +442,63 @@ def logger_page(data):
         st.info("No plans found. Create one in the Planner.")
         return
 
-    plan_names = sorted(plans.keys())
-    active_plan_name = st.selectbox("Active plan", plan_names)
-    active_plan = plans[active_plan_name]
+    # Compact header row: active plan + log date
+    col_plan, col_date = st.columns([2, 1])
+    with col_plan:
+        plan_names = sorted(plans.keys())
+        active_plan_name = st.selectbox("Active plan", plan_names)
+    with col_date:
+        log_date = st.date_input("Log date", value=date.today())
 
-    log_date = st.date_input("Log date", value=date.today())
+    active_plan = plans[active_plan_name]
     log_date_iso = log_date.isoformat()
 
     todays_exs = active_plan["workouts"].get(log_date_iso, [])
-    st.subheader(f"Planned workouts for {log_date_iso}")
+
     if not todays_exs:
         st.info("No workouts assigned for this date in the selected plan.")
         return
 
-    st.write(todays_exs)
-
     st.markdown("### Log your sets")
+
     logs = data["logs"]
 
+    # One row per exercise: name + weight/reps/sets/RPE + button
     for ex in todays_exs:
-        with st.expander(ex):
+        row = st.columns([2, 1, 1, 1, 1, 1])
+        with row[0]:
+            st.markdown(f"**{ex}**")
+        with row[1]:
             weight = st.number_input(
-                f"{ex} – weight", min_value=0.0, step=1.0,
+                "Weight",
+                min_value=0.0,
+                step=1.0,
                 key=f"{log_date_iso}_{ex}_weight",
             )
+        with row[2]:
             reps = st.number_input(
-                f"{ex} – reps", min_value=0, step=1,
+                "Reps",
+                min_value=0,
+                step=1,
                 key=f"{log_date_iso}_{ex}_reps",
             )
+        with row[3]:
             sets = st.number_input(
-                f"{ex} – sets", min_value=0, step=1,
+                "Sets",
+                min_value=0,
+                step=1,
                 key=f"{log_date_iso}_{ex}_sets",
             )
-            if st.button(f"Add set for {ex}", key=f"{log_date_iso}_{ex}_add"):
+        with row[4]:
+            rpe = st.slider(
+                "RPE",
+                min_value=1,
+                max_value=10,
+                value=7,
+                key=f"{log_date_iso}_{ex}_rpe",
+            )
+        with row[5]:
+            if st.button("Log", key=f"{log_date_iso}_{ex}_add"):
                 if reps <= 0 or sets <= 0:
                     st.warning("Reps and sets must be > 0.")
                 else:
@@ -410,11 +510,12 @@ def logger_page(data):
                         "weight": float(weight),
                         "reps": int(reps),
                         "sets": int(sets),
+                        "rpe": int(rpe),
                         "volume": volume,
                     }
                     logs.append(entry)
                     data["logs"] = logs
-                    st.success("Set added. Save to Drive to persist.")
+                    st.success(f"Logged {ex}.")
 
     st.markdown("---")
     st.subheader("Training history")
@@ -424,8 +525,17 @@ def logger_page(data):
         return
 
     df = pd.DataFrame(logs)
+
+    # Backward compatibility: some older entries may have no RPE
+    if "rpe" not in df.columns:
+        df["rpe"] = None
+
+    # Drop plan column from view if present
+    if "plan" in df.columns:
+        df = df.drop(columns=["plan"])
+
     df = df.sort_values(["date", "exercise"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, use_container_width=True, height=320)
 
 
 # ---------------------------------------------------------------------
@@ -448,6 +558,7 @@ def debug_page(data, user_info):
 
 def main():
     st.set_page_config(page_title="Workout Tracker (Drive-backed)", layout="wide")
+    apply_custom_style()
 
     creds, user_info = ensure_google_login()
     drive_service = get_drive_service(creds)
@@ -463,7 +574,7 @@ def main():
 
     data = st.session_state["data"]
 
-    # Top bar: save to Drive
+    # Sidebar: save + navigation
     with st.sidebar:
         st.markdown(f"**Signed in as:** {user_info.get('email', 'Unknown')}")
         if st.button("Save to Google Drive (overwrite JSON)"):
