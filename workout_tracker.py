@@ -9,7 +9,8 @@
 
 
 import json
-from datetime import date, timedelta
+import time
+from datetime import date, timedelta, datetime
 
 import pandas as pd
 import streamlit as st
@@ -249,6 +250,76 @@ def save_user_data(drive_service, file_id, data):
     return updated
 
 
+def now_ts():
+    return int(time.time())
+
+
+def iso_now():
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _ensure_timestamps(data: dict):
+    # Ensure plans have updated_at and logs have ts
+    if not isinstance(data, dict):
+        return
+    plans = data.setdefault("plans", {})
+    for p in plans.values():
+        if "updated_at" not in p:
+            p["updated_at"] = iso_now()
+    logs = data.setdefault("logs", [])
+    for e in logs:
+        if "ts" not in e:
+            e["ts"] = now_ts()
+
+
+def merge_user_data(local: dict, remote: dict) -> dict:
+    """Merge local and remote user data.
+
+    - Plans: choose per-plan the one with the newest `updated_at`.
+    - Logs: treat as append-only; deduplicate by (date, exercise, ts).
+    """
+    local = local or {"plans": {}, "logs": []}
+    remote = remote or {"plans": {}, "logs": []}
+
+    # Ensure timestamps exist for correct comparison
+    _ensure_timestamps(local)
+    _ensure_timestamps(remote)
+
+    merged = {"plans": {}, "logs": []}
+
+    # Merge plans by name, prefer newest updated_at
+    plan_names = set(local.get("plans", {}).keys()) | set(remote.get("plans", {}).keys())
+    for name in plan_names:
+        lp = local.get("plans", {}).get(name)
+        rp = remote.get("plans", {}).get(name)
+        if lp and rp:
+            if lp.get("updated_at", "") >= rp.get("updated_at", ""):
+                merged["plans"][name] = lp
+            else:
+                merged["plans"][name] = rp
+        else:
+            merged["plans"][name] = lp or rp
+
+    # Merge logs: dedupe by (date, exercise, ts)
+    seen = {}
+    for e in remote.get("logs", []):
+        key = (e.get("date"), e.get("exercise"), e.get("ts"))
+        seen[key] = e
+    for e in local.get("logs", []):
+        key = (e.get("date"), e.get("exercise"), e.get("ts"))
+        seen[key] = e
+
+    merged_logs = list(seen.values())
+    # Sort logs by date then newest ts first
+    try:
+        merged_logs.sort(key=lambda x: (x.get("date", ""), -int(x.get("ts", 0))))
+    except Exception:
+        pass
+    merged["logs"] = merged_logs
+
+    return merged
+
+
 # ---------------------------------------------------------------------
 # Exercise DB
 # ---------------------------------------------------------------------
@@ -375,6 +446,7 @@ def planner_page(data, exercise_options):
                     "num_weeks": int(num_weeks),
                     "num_days": int(num_weeks) * 7,
                     "workouts": workouts,
+                    "updated_at": iso_now(),
                 }
                 data["plans"] = plans
                 st.session_state["edit_plan_name"] = None
@@ -524,8 +596,9 @@ def logger_page(data):
                     "weight": float(w),
                     "reps": int(r),
                     "sets": int(s),
-                    "rpe": int(rp),
-                    "volume": volume,
+                        "rpe": int(rp),
+                        "volume": volume,
+                        "ts": now_ts(),
                 }
                 # Remove any existing entry for same date+exercise, then append
                 logs = [le for le in logs if not (le.get("date") == log_date_iso and le.get("exercise") == ex)]
@@ -602,9 +675,19 @@ def main():
     # Sidebar: save + navigation
     with st.sidebar:
         st.markdown(f"**Signed in as:** {user_info.get('email', 'Unknown')}")
-        if st.button("Save to Google Drive (overwrite JSON)"):
-            save_user_data(drive_service, data_file_id, data)
-            st.success("Data saved to your Google Drive JSON file.")
+        if st.button("Save to Google Drive (merge & save JSON)"):
+            # Fetch remote, merge with local, then save merged data so that
+            # multi-device / multi-session edits are preserved.
+            try:
+                remote = load_user_data(drive_service, data_file_id)
+            except Exception:
+                remote = {"plans": {}, "logs": []}
+
+            merged = merge_user_data(data, remote)
+            # Update session data and persist
+            st.session_state["data"] = merged
+            save_user_data(drive_service, data_file_id, merged)
+            st.success("Data merged with Drive and saved.")
 
         st.markdown("---")
         page = st.radio("Navigate", ["Planner", "Logger", "Debug"])
