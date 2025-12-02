@@ -431,6 +431,61 @@ def load_exercise_db(path: str):
 
 
 # ---------------------------------------------------------------------
+# Input helpers
+# ---------------------------------------------------------------------
+
+
+def render_numeric_input(label: str, key: str, is_float: bool = False, step=1):
+    """Render a compact text-based numeric input with +/- buttons.
+
+    - Stores string values in `st.session_state[key]` so the field can be empty.
+    - Buttons increment/decrement the parsed value and write back as string.
+    - Returns parsed numeric value (float or int) or None if empty/invalid.
+    """
+    cols = st.columns([1, 3])
+    with cols[0]:
+        st.markdown(f"{label}")
+    with cols[1]:
+        # Layout: main text input plus two small buttons
+        inp_cols = st.columns([6, 1, 1])
+        # Ensure there's a session_state entry (string) so text_input can bind
+        current = st.session_state.get(key, "")
+        txt = inp_cols[0].text_input("", value=current, key=key, placeholder=("" if is_float else ""))
+
+        # Helper to parse
+        def _parse(val_str):
+            if val_str is None or str(val_str).strip() == "":
+                return None
+            try:
+                return float(val_str) if is_float else int(float(val_str))
+            except Exception:
+                return None
+
+        parsed = _parse(st.session_state.get(key, ""))
+
+        # Decrement
+        if inp_cols[1].button("-", key=f"{key}_dec"):
+            if parsed is None:
+                new = 0.0 if is_float else 0
+            else:
+                new = parsed - step
+            # store string representation
+            st.session_state[key] = str(new)
+            parsed = _parse(st.session_state.get(key, ""))
+
+        # Increment
+        if inp_cols[2].button("+", key=f"{key}_inc"):
+            if parsed is None:
+                new = step
+            else:
+                new = parsed + step
+            st.session_state[key] = str(new)
+            parsed = _parse(st.session_state.get(key, ""))
+
+        return float(parsed) if (parsed is not None and is_float) else (int(parsed) if parsed is not None else None)
+
+
+# ---------------------------------------------------------------------
 # Planner UI (weekly timetable)
 # ---------------------------------------------------------------------
 
@@ -627,10 +682,17 @@ def logger_page(data):
         # Stacked layout: use Streamlit expanders so widgets are grouped reliably
         for ex in todays_exs:
             with st.expander(ex, expanded=True):
-                st.number_input("Weight", min_value=0.0, step=1.0, key=f"{log_date_iso}_{ex}_weight")
-                st.number_input("Reps", min_value=0, step=1, key=f"{log_date_iso}_{ex}_reps")
-                st.number_input("Sets", min_value=0, step=1, key=f"{log_date_iso}_{ex}_sets")
-                st.slider("RPE", min_value=1, max_value=10, value=7, key=f"{log_date_iso}_{ex}_rpe")
+                # Use custom numeric fields so they can start empty and be quickly edited
+                w = render_numeric_input("Weight", key=f"{log_date_iso}_{ex}_weight", is_float=True, step=1)
+                r = render_numeric_input("Reps", key=f"{log_date_iso}_{ex}_reps", is_float=False, step=1)
+                s = render_numeric_input("Sets", key=f"{log_date_iso}_{ex}_sets", is_float=False, step=1)
+                # RPE on same line: label + slider
+                rpe_cols = st.columns([1, 3])
+                with rpe_cols[0]:
+                    st.markdown("RPE")
+                with rpe_cols[1]:
+                    st.session_state.setdefault(f"{log_date_iso}_{ex}_rpe", 7)
+                        st.slider("", min_value=1, max_value=10, value=st.session_state.get(f"{log_date_iso}_{ex}_rpe", 7), key=f"{log_date_iso}_{ex}_rpe")
             st.markdown("&nbsp;")
     else:
         # Header row for inputs (display once)
@@ -647,47 +709,38 @@ def logger_page(data):
             with row[0]:
                 st.markdown(f"**{ex}**")
             with row[1]:
-                # weight as float
-                st.number_input(
-                    "",
-                    min_value=0.0,
-                    step=1.0,
-                    key=f"{log_date_iso}_{ex}_weight",
-                    label_visibility="collapsed",
-                )
+                render_numeric_input("", key=f"{log_date_iso}_{ex}_weight", is_float=True, step=1)
             with row[2]:
-                st.number_input(
-                    "",
-                    min_value=0,
-                    step=1,
-                    key=f"{log_date_iso}_{ex}_reps",
-                    label_visibility="collapsed",
-                )
+                render_numeric_input("", key=f"{log_date_iso}_{ex}_reps", is_float=False, step=1)
             with row[3]:
-                st.number_input(
-                    "",
-                    min_value=0,
-                    step=1,
-                    key=f"{log_date_iso}_{ex}_sets",
-                    label_visibility="collapsed",
-                )
+                render_numeric_input("", key=f"{log_date_iso}_{ex}_sets", is_float=False, step=1)
             with row[4]:
-                st.slider(
-                    "",
-                    min_value=1,
-                    max_value=10,
-                    value=7,
-                    key=f"{log_date_iso}_{ex}_rpe",
-                    label_visibility="collapsed",
-                )
+                # RPE slider aligned in same column
+                st.session_state.setdefault(f"{log_date_iso}_{ex}_rpe", 7)
+                st.slider("", min_value=1, max_value=10, value=st.session_state.get(f"{log_date_iso}_{ex}_rpe", 7), key=f"{log_date_iso}_{ex}_rpe", label_visibility="collapsed")
 
     # Single action button for logging all non-empty rows
     if st.button("Log selected sets"):
         any_saved = False
         for ex in todays_exs:
-            w = st.session_state.get(f"{log_date_iso}_{ex}_weight", 0.0)
-            r = st.session_state.get(f"{log_date_iso}_{ex}_reps", 0)
-            s = st.session_state.get(f"{log_date_iso}_{ex}_sets", 0)
+            # Parse values (our helper stores strings for empty fields)
+            def _parse_float_key(k):
+                v = st.session_state.get(k, "")
+                try:
+                    return float(v)
+                except Exception:
+                    return 0.0
+
+            def _parse_int_key(k):
+                v = st.session_state.get(k, "")
+                try:
+                    return int(float(v))
+                except Exception:
+                    return 0
+
+            w = _parse_float_key(f"{log_date_iso}_{ex}_weight")
+            r = _parse_int_key(f"{log_date_iso}_{ex}_reps")
+            s = _parse_int_key(f"{log_date_iso}_{ex}_sets")
             rp = st.session_state.get(f"{log_date_iso}_{ex}_rpe", 7)
 
             # Only save fully-filled entries (>0 for weight, reps, sets)
