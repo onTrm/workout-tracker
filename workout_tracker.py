@@ -61,6 +61,45 @@ def apply_custom_style():
         section[data-testid="stSidebar"] .block-container {
             padding-top: 1rem;
         }
+        /* Make tables and markdown wrap nicely */
+        .stMarkdown, .stText, .stDataFrame {
+            word-break: break-word;
+        }
+
+        /* Responsive adjustments for small screens */
+        @media (max-width: 800px) {
+            .block-container {
+                max-width: 95vw !important;
+                padding-left: 0.6rem !important;
+                padding-right: 0.6rem !important;
+            }
+            /* Make buttons full-width for easier tapping */
+            .stButton > button {
+                width: 100% !important;
+                box-sizing: border-box !important;
+            }
+            /* Make inputs and sliders shrink and wrap */
+            input[type="number"], .stSlider > div {
+                min-width: 0 !important;
+                width: 100% !important;
+            }
+            /* Ensure dataframes and tables scroll inside container */
+            .stDataFrame > div, .stDataFrame table {
+                width: 100% !important;
+                overflow-x: auto;
+            }
+            /* Stack Streamlit columns vertically on narrow screens */
+            /* Targets the column wrapper produced by st.columns */
+            div[data-testid="column"] {
+                min-width: 100% !important;
+                display: block !important;
+            }
+            /* Fallback: target common Streamlit column wrapper classes */
+            .stColumns > div {
+                min-width: 100% !important;
+                display: block !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
