@@ -791,17 +791,17 @@ def main():
 
         st.markdown("---")
         st.markdown("### Navigate")
-            # Remove 'Navigate' heading and provide two primary actions
-            if st.button("Log Workouts", key="nav_logger"):
-                st.session_state["page"] = "Logger"
-            if st.button("Plan Workouts", key="nav_planner"):
-                st.session_state["page"] = "Planner"
+        # Remove 'Navigate' heading and provide two primary actions
+        if st.button("Log Workouts", key="nav_logger"):
+            st.session_state["page"] = "Logger"
+        if st.button("Plan Workouts", key="nav_planner"):
+            st.session_state["page"] = "Planner"
 
-            # Spacer then small debug control at the bottom (less prominent)
-            st.markdown("<div style='height:200px'></div>", unsafe_allow_html=True)
-            st.checkbox("Show Debug", value=False, key="show_debug")
-            if st.session_state.get("show_debug"):
-                st.session_state["page"] = "Debug"
+        # Spacer then small debug control at the bottom (less prominent)
+        st.markdown("<div style='height:200px'></div>", unsafe_allow_html=True)
+        st.checkbox("Show Debug", value=False, key="show_debug")
+        if st.session_state.get("show_debug"):
+            st.session_state["page"] = "Debug"
 
         st.markdown("---")
         # Mobile-friendly stacked card layout toggle for logger
