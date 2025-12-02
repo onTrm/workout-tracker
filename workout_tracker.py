@@ -1,4 +1,4 @@
-# app.py
+# workout_tracker.py
 #
 # Multi-user Streamlit workout tracker with per-user Google Drive storage.
 # - Each user: single JSON file in their own Drive (plans + logs).
