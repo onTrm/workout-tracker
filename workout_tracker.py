@@ -123,6 +123,16 @@ def apply_custom_style():
                 margin-bottom: 0.6rem;
             }
             .exercise-card h3 { margin: 0 0 0.4rem 0; padding: 0; font-size: 1.05rem; }
+            /* Ensure inputs inside cards are wide and usable on mobile */
+            .exercise-card input[type="number"], .exercise-card .stNumberInput input {
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: none !important;
+                box-sizing: border-box !important;
+                padding: 0.35rem 0.4rem !important;
+                font-size: 1rem !important;
+            }
+            .exercise-card .stSlider > div { width: 100% !important; }
             /* Sidebar nav larger buttons */
             section[data-testid="stSidebar"] .stButton > button {
                 font-size: 1.05rem !important;
@@ -781,13 +791,17 @@ def main():
 
         st.markdown("---")
         st.markdown("### Navigate")
-        # Navigation buttons (clickable) — set session page when clicked
-        if st.button("Logger", key="nav_logger"):
-            st.session_state["page"] = "Logger"
-        if st.button("Planner", key="nav_planner"):
-            st.session_state["page"] = "Planner"
-        if st.button("Debug", key="nav_debug"):
-            st.session_state["page"] = "Debug"
+            # Remove 'Navigate' heading and provide two primary actions
+            if st.button("Log Workouts", key="nav_logger"):
+                st.session_state["page"] = "Logger"
+            if st.button("Plan Workouts", key="nav_planner"):
+                st.session_state["page"] = "Planner"
+
+            # Spacer then small debug control at the bottom (less prominent)
+            st.markdown("<div style='height:200px'></div>", unsafe_allow_html=True)
+            st.checkbox("Show Debug", value=False, key="show_debug")
+            if st.session_state.get("show_debug"):
+                st.session_state["page"] = "Debug"
 
         st.markdown("---")
         # Mobile-friendly stacked card layout toggle for logger
