@@ -114,6 +114,22 @@ def apply_custom_style():
             div[data-baseweb="slider"] {
                 max-width: 6.5rem !important;
             }
+            /* Exercise card styling for stacked/mobile logger */
+            .exercise-card {
+                border: 1px solid #e6e6e6;
+                border-radius: 8px;
+                background: #f8f9fa;
+                padding: 0.6rem 0.8rem;
+                margin-bottom: 0.6rem;
+            }
+            .exercise-card h3 { margin: 0 0 0.4rem 0; padding: 0; font-size: 1.05rem; }
+            /* Sidebar nav larger buttons */
+            section[data-testid="stSidebar"] .stButton > button {
+                font-size: 1.05rem !important;
+                padding: 0.6rem 0.8rem !important;
+                margin-bottom: 0.5rem !important;
+                text-align: left !important;
+            }
         }
         </style>
         """,
@@ -583,53 +599,66 @@ def logger_page(data):
 
     logs = data["logs"]
 
-    # Header row for inputs (display once)
-    header_cols = st.columns([3, 1.5, 1, 1, 1])
-    header_cols[0].markdown("**Exercise**")
-    header_cols[1].markdown("**Weight**")
-    header_cols[2].markdown("**Reps**")
-    header_cols[3].markdown("**Sets**")
-    header_cols[4].markdown("**RPE**")
+    mobile_layout = st.session_state.get("logger_card_layout", True)
 
-    # One row per exercise: name inline + input boxes (no per-row labels)
-    for ex in todays_exs:
-        row = st.columns([3, 1.5, 1, 1, 1])
-        with row[0]:
-            st.markdown(f"**{ex}**")
-        with row[1]:
-            # weight as float
-            st.number_input(
-                "",
-                min_value=0.0,
-                step=1.0,
-                key=f"{log_date_iso}_{ex}_weight",
-                label_visibility="collapsed",
-            )
-        with row[2]:
-            st.number_input(
-                "",
-                min_value=0,
-                step=1,
-                key=f"{log_date_iso}_{ex}_reps",
-                label_visibility="collapsed",
-            )
-        with row[3]:
-            st.number_input(
-                "",
-                min_value=0,
-                step=1,
-                key=f"{log_date_iso}_{ex}_sets",
-                label_visibility="collapsed",
-            )
-        with row[4]:
-            st.slider(
-                "",
-                min_value=1,
-                max_value=10,
-                value=7,
-                key=f"{log_date_iso}_{ex}_rpe",
-                label_visibility="collapsed",
-            )
+    if mobile_layout:
+        # Stacked card layout: each exercise gets its own card with labels above inputs
+        for ex in todays_exs:
+            st.markdown(f"<div class='exercise-card'><h3>{ex}</h3></div>", unsafe_allow_html=True)
+            # stacked inputs with visible labels for clarity on mobile
+            st.number_input("Weight", min_value=0.0, step=1.0, key=f"{log_date_iso}_{ex}_weight")
+            st.number_input("Reps", min_value=0, step=1, key=f"{log_date_iso}_{ex}_reps")
+            st.number_input("Sets", min_value=0, step=1, key=f"{log_date_iso}_{ex}_sets")
+            st.slider("RPE", min_value=1, max_value=10, value=7, key=f"{log_date_iso}_{ex}_rpe")
+            st.markdown("&nbsp;")
+    else:
+        # Header row for inputs (display once)
+        header_cols = st.columns([3, 1.5, 1, 1, 1])
+        header_cols[0].markdown("**Exercise**")
+        header_cols[1].markdown("**Weight**")
+        header_cols[2].markdown("**Reps**")
+        header_cols[3].markdown("**Sets**")
+        header_cols[4].markdown("**RPE**")
+
+        # One row per exercise: name inline + input boxes (no per-row labels)
+        for ex in todays_exs:
+            row = st.columns([3, 1.5, 1, 1, 1])
+            with row[0]:
+                st.markdown(f"**{ex}**")
+            with row[1]:
+                # weight as float
+                st.number_input(
+                    "",
+                    min_value=0.0,
+                    step=1.0,
+                    key=f"{log_date_iso}_{ex}_weight",
+                    label_visibility="collapsed",
+                )
+            with row[2]:
+                st.number_input(
+                    "",
+                    min_value=0,
+                    step=1,
+                    key=f"{log_date_iso}_{ex}_reps",
+                    label_visibility="collapsed",
+                )
+            with row[3]:
+                st.number_input(
+                    "",
+                    min_value=0,
+                    step=1,
+                    key=f"{log_date_iso}_{ex}_sets",
+                    label_visibility="collapsed",
+                )
+            with row[4]:
+                st.slider(
+                    "",
+                    min_value=1,
+                    max_value=10,
+                    value=7,
+                    key=f"{log_date_iso}_{ex}_rpe",
+                    label_visibility="collapsed",
+                )
 
     # Single action button for logging all non-empty rows
     if st.button("Log selected sets"):
@@ -726,6 +755,13 @@ def main():
 
     data = st.session_state["data"]
 
+    # Default page and logger layout preferences
+    if "page" not in st.session_state:
+        st.session_state["page"] = "Logger"
+    if "logger_card_layout" not in st.session_state:
+        # default to mobile-friendly stacked cards (user can toggle)
+        st.session_state["logger_card_layout"] = True
+
     # Sidebar: save + navigation
     with st.sidebar:
         st.markdown(f"**Signed in as:** {user_info.get('email', 'Unknown')}")
@@ -744,7 +780,20 @@ def main():
             st.success("Data merged with Drive and saved.")
 
         st.markdown("---")
-        page = st.radio("Navigate", ["Planner", "Logger", "Debug"])
+        st.markdown("### Navigate")
+        # Navigation buttons (clickable) — set session page when clicked
+        if st.button("Logger", key="nav_logger"):
+            st.session_state["page"] = "Logger"
+        if st.button("Planner", key="nav_planner"):
+            st.session_state["page"] = "Planner"
+        if st.button("Debug", key="nav_debug"):
+            st.session_state["page"] = "Debug"
+
+        st.markdown("---")
+        # Mobile-friendly stacked card layout toggle for logger
+        st.checkbox("Mobile-friendly logger layout (stacked cards)", value=st.session_state.get("logger_card_layout", True), key="logger_card_layout")
+
+        page = st.session_state.get("page", "Logger")
 
     # Exercise DB
     try:
