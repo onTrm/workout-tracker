@@ -32,6 +32,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
+import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------------
 # Configuration
@@ -241,38 +242,34 @@ def ensure_google_login():
                     creds = None
 
         if "code" in query_params:
-            # Callback from Google: exchange code for tokens
-            state = query_params.get("state", [None])[0]
-            flow = get_flow(state=state)
-            flow.fetch_token(code=query_params["code"][0])
-            creds = flow.credentials
-            st.session_state["google_creds"] = json.loads(creds.to_json())
+            code_val = query_params["code"][0]
+            # Prevent reprocessing the same code on Streamlit reruns
+            if st.session_state.get("_processed_code") == code_val:
+                # Already processed this code; clear URL and continue
+                st.experimental_set_query_params()
+            else:
+                # Callback from Google: exchange code for tokens
+                state = query_params.get("state", [None])[0]
+                flow = get_flow(state=state)
+                try:
+                    flow.fetch_token(code=code_val)
+                    creds = flow.credentials
+                    st.session_state["google_creds"] = json.loads(creds.to_json())
+                    st.session_state["_processed_code"] = code_val  # mark as processed
 
-            # After successful login, attempt to persist creds for this device
-            try:
-                # Generate a device token and save encrypted creds if possible
-                token = uuid.uuid4().hex
-                saved = save_creds_for_token(token, creds.to_json())
-                if saved:
-                    # Ask the browser to store the token in localStorage and reload with the token in the URL
-                    js = f"""
-                    <script>
-                    try {{
-                        localStorage.setItem('wt_persist', '{token}');
-                        const u = new URL(window.location.href);
-                        u.searchParams.set('persist_token', '{token}');
-                        // remove OAuth code/state params to avoid reprocessing
-                        u.searchParams.delete('code');
-                        u.searchParams.delete('state');
-                        window.location.replace(u.toString());
-                    }} catch(e) {{ console.warn('wt_persist save failed', e); }}
-                    </script>
-                    """
-                    st.markdown(js, unsafe_allow_html=True)
-                    # Stop here so Streamlit doesn't continue or clear params before the JS runs
+                    # Clear query params immediately to prevent reuse on rerun
+                    st.experimental_set_query_params()
+
+                    # Persist creds for this device
+                    token = uuid.uuid4().hex
+                    saved = save_creds_for_token(token, creds.to_json())
+                    if saved:
+                        st.session_state["_device_token"] = token
+                except Exception as e:
+                    # Code already used or invalid; clear params and show login
+                    st.experimental_set_query_params()
+                    st.error(f"Login failed: {e}. Please try again.")
                     st.stop()
-            except Exception:
-                pass
         else:
             # Start login: build auth URL and show button/link
             flow = get_flow()
@@ -287,24 +284,37 @@ def ensure_google_login():
                 "To use this app and store your plans/logs privately in your own "
                 "Google Drive, please sign in with Google."
             )
-            # Inject a small script: if the browser has a saved token in localStorage, redirect with that token
-            pre_js = """
-                <script>
-                try {
-                    const t = localStorage.getItem('wt_persist');
-                    if (t) {
-                        const u = new URL(window.location.href);
-                        u.searchParams.set('persist_token', t);
-                        window.location.replace(u.toString());
-                    }
-                } catch(e) { console.warn(e); }
-                </script>
+            # Use components.html for reliable JS execution on Streamlit Cloud
+            pre_js_html = """
+            <script>
+            try {
+                const t = window.parent.localStorage.getItem('wt_persist');
+                if (t) {
+                    const u = new URL(window.parent.location.href);
+                    u.searchParams.set('persist_token', t);
+                    window.parent.location.replace(u.toString());
+                }
+            } catch(e) { console.warn(e); }
+            </script>
             """
-            st.markdown(pre_js, unsafe_allow_html=True)
+            components.html(pre_js_html, height=0)
             st.markdown(f"[Sign in with Google]({auth_url})")
             st.stop()
 
     # At this point we have valid creds
+    # If we just saved a device token, inject it into browser localStorage
+    device_token = st.session_state.get("_device_token")
+    if device_token:
+        js_html = f"""
+        <script>
+        try {{
+            window.parent.localStorage.setItem('wt_persist', '{device_token}');
+        }} catch(e) {{ console.warn('wt_persist save failed', e); }}
+        </script>
+        """
+        components.html(js_html, height=0)
+        del st.session_state["_device_token"]  # only inject once
+
     user_info = get_user_info(creds)
     return creds, user_info
 
@@ -1082,18 +1092,16 @@ def debug_page(data, user_info):
         sel_token = tokens[sel_i]
 
         if st.button("Restore selected token to browser localStorage"):
-            # Inject JS to set localStorage and reload — token is sensitive so only set here
             js_token = json.dumps(sel_token)
-            js = f"""
+            js_html = f"""
             <script>
             try {{
-                localStorage.setItem('wt_persist', {js_token});
-                // reload so app reads the token
-                window.location.reload();
+                window.parent.localStorage.setItem('wt_persist', {js_token});
+                window.parent.location.reload();
             }} catch(e) {{ console.warn(e); }}
             </script>
             """
-            st.markdown(js, unsafe_allow_html=True)
+            components.html(js_html, height=0)
 
         if st.button("Delete selected token from server and clear localStorage"):
             try:
@@ -1106,12 +1114,12 @@ def debug_page(data, user_info):
             except Exception as e:
                 st.error(f"Failed to remove token: {e}")
             # Clear client localStorage as well
-            clear_js = """
+            clear_js_html = """
             <script>
-            try { localStorage.removeItem('wt_persist'); window.location.reload(); } catch(e) { console.warn(e); }
+            try { window.parent.localStorage.removeItem('wt_persist'); window.parent.location.reload(); } catch(e) { console.warn(e); }
             </script>
             """
-            st.markdown(clear_js, unsafe_allow_html=True)
+            components.html(clear_js_html, height=0)
 
     # Session flags
     st.markdown("**Session state**")
@@ -1135,21 +1143,21 @@ def main():
     # localStorage (`wt_persist`) but the URL doesn't include `persist_token`,
     # add it and reload. This ensures a full browser reload will still provide
     # the token to the server so credentials can be rehydrated.
-    early_js = """
+    early_js_html = """
     <script>
     try {
-        const u = new URL(window.location.href);
+        const u = new URL(window.parent.location.href);
         if (!u.searchParams.get('persist_token')) {
-            const t = localStorage.getItem('wt_persist');
+            const t = window.parent.localStorage.getItem('wt_persist');
             if (t) {
                 u.searchParams.set('persist_token', t);
-                window.location.replace(u.toString());
+                window.parent.location.replace(u.toString());
             }
         }
     } catch(e) { console.warn(e); }
     </script>
     """
-    st.markdown(early_js, unsafe_allow_html=True)
+    components.html(early_js_html, height=0)
 
     creds, user_info = ensure_google_login()
     drive_service = get_drive_service(creds)
