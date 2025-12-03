@@ -768,6 +768,41 @@ def logger_page(data):
                 st.number_input("Reps", min_value=0, step=1, key=f"{log_date_iso}_{ex}_reps")
                 st.number_input("Sets", min_value=0, step=1, key=f"{log_date_iso}_{ex}_sets")
                 st.slider("RPE", min_value=1, max_value=10, value=7, key=f"{log_date_iso}_{ex}_rpe")
+
+                # Timing controls: Start / Stop / Reset
+                start_key = f"{log_date_iso}_{ex}_start_ts"
+                end_key = f"{log_date_iso}_{ex}_end_ts"
+                tcols = st.columns([1,1,1,3])
+                with tcols[0]:
+                    if st.button("Start", key=f"{start_key}_btn"):
+                        st.session_state[start_key] = now_ts()
+                        # clear any previous end
+                        if end_key in st.session_state:
+                            del st.session_state[end_key]
+                with tcols[1]:
+                    if st.button("Stop", key=f"{end_key}_btn"):
+                        # only stop if started
+                        if st.session_state.get(start_key):
+                            st.session_state[end_key] = now_ts()
+                with tcols[2]:
+                    if st.button("Reset", key=f"{start_key}_reset"):
+                        if start_key in st.session_state:
+                            del st.session_state[start_key]
+                        if end_key in st.session_state:
+                            del st.session_state[end_key]
+                # Display current timing status
+                ts_display = []
+                if st.session_state.get(start_key):
+                    stt = datetime.fromtimestamp(int(st.session_state[start_key])).strftime('%Y-%m-%d %H:%M:%S')
+                    ts_display.append(f"Start: {stt}")
+                if st.session_state.get(end_key):
+                    edt = datetime.fromtimestamp(int(st.session_state[end_key])).strftime('%Y-%m-%d %H:%M:%S')
+                    ts_display.append(f"End: {edt}")
+                if st.session_state.get(start_key) and st.session_state.get(end_key):
+                    dur_min = (int(st.session_state[end_key]) - int(st.session_state[start_key])) / 60.0
+                    ts_display.append(f"Duration: {dur_min:.2f} min")
+                if ts_display:
+                    st.markdown("  \n".join(ts_display))
             st.markdown("&nbsp;")
     else:
         # Header row for inputs (display once)
@@ -817,6 +852,36 @@ def logger_page(data):
                     key=f"{log_date_iso}_{ex}_rpe",
                     label_visibility="collapsed",
                 )
+            # Inline timing controls for desktop: small buttons beneath the row
+            start_key = f"{log_date_iso}_{ex}_start_ts"
+            end_key = f"{log_date_iso}_{ex}_end_ts"
+            tcols = st.columns([3, 1, 1, 1])
+            with tcols[1]:
+                if st.button("Start", key=f"{start_key}_btn_desktop"):
+                    st.session_state[start_key] = now_ts()
+                    if end_key in st.session_state:
+                        del st.session_state[end_key]
+            with tcols[2]:
+                if st.button("Stop", key=f"{end_key}_btn_desktop"):
+                    if st.session_state.get(start_key):
+                        st.session_state[end_key] = now_ts()
+            with tcols[3]:
+                if st.button("Reset", key=f"{start_key}_reset_desktop"):
+                    if start_key in st.session_state:
+                        del st.session_state[start_key]
+                    if end_key in st.session_state:
+                        del st.session_state[end_key]
+            # Show timings inline
+            ts_parts = []
+            if st.session_state.get(start_key):
+                ts_parts.append("Start: " + datetime.fromtimestamp(int(st.session_state[start_key])).strftime('%Y-%m-%d %H:%M:%S'))
+            if st.session_state.get(end_key):
+                ts_parts.append("End: " + datetime.fromtimestamp(int(st.session_state[end_key])).strftime('%Y-%m-%d %H:%M:%S'))
+            if st.session_state.get(start_key) and st.session_state.get(end_key):
+                dur_min = (int(st.session_state[end_key]) - int(st.session_state[start_key])) / 60.0
+                ts_parts.append(f"Duration: {dur_min:.2f} min")
+            if ts_parts:
+                st.markdown(" — ".join(ts_parts))
 
     # Single action button for logging all non-empty rows
     if st.button("Log selected sets"):
@@ -840,6 +905,9 @@ def logger_page(data):
                         "rpe": int(rp),
                         "volume": volume,
                         "ts": now_ts(),
+                        "start_ts": int(st.session_state.get(start_key)) if start_key in st.session_state else None,
+                        "end_ts": int(st.session_state.get(end_key)) if end_key in st.session_state else None,
+                        "duration_min": round(((int(st.session_state[end_key]) - int(st.session_state[start_key])) / 60.0) if (start_key in st.session_state and end_key in st.session_state) else 0.0, 2),
                 }
                 # Remove any existing entry for same date+exercise, then append
                 logs = [le for le in logs if not (le.get("date") == log_date_iso and le.get("exercise") == ex)]
