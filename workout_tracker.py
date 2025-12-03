@@ -265,15 +265,14 @@ def ensure_google_login():
                         u.searchParams.delete('code');
                         u.searchParams.delete('state');
                         window.location.replace(u.toString());
-                    }} catch(e) {{ console.warn(e); }}
+                    }} catch(e) {{ console.warn('wt_persist save failed', e); }}
                     </script>
                     """
                     st.markdown(js, unsafe_allow_html=True)
+                    # Stop here so Streamlit doesn't continue or clear params before the JS runs
+                    st.stop()
             except Exception:
                 pass
-
-            # Clear query params server-side if possible
-            st.experimental_set_query_params()
         else:
             # Start login: build auth URL and show button/link
             flow = get_flow()
