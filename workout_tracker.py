@@ -929,86 +929,71 @@ def logger_page(data):
 
     df = pd.DataFrame(logs)
 
-    # Backward compatibility: some older entries may have no RPE
+    # Backward compatibility: ensure columns exist and prepare filtered history
     if "rpe" not in df.columns:
         df["rpe"] = None
 
-    # Drop plan column from view if present
-    if "plan" in df.columns:
-        df = df.drop(columns=["plan"])
+    # Ensure common columns exist
+    for col in ["date", "exercise", "weight", "reps", "sets", "rpe", "volume", "ts", "start_ts", "end_ts", "duration_min", "plan"]:
+        if col not in df.columns:
+            df[col] = None
 
-        df = df.sort_values(["date", "exercise"])
-        st.dataframe(df, use_container_width=True, height=240)
+    # Filter logs to only those for the active plan and today's exercises
+    filtered = df[(df["plan"] == active_plan_name) & (df["exercise"].isin(todays_exs))].copy()
+    if "plan" in filtered.columns:
+        filtered = filtered.drop(columns=["plan"])
 
-        # Provide simple edit/delete UI for logs: select an entry and allow editing or removal
-        st.markdown("---")
-        st.subheader("Manage log entries")
-        # Build choices keyed by unique ts (timestamp) for reliable selection
-        entry_choices = []
-        for i, le in enumerate(logs):
-            label = f"{le.get('date')} | {le.get('exercise')} | {le.get('ts')}"
-            entry_choices.append((label, i))
+    # Sort for display
+    try:
+        filtered = filtered.sort_values(["date", "exercise"])
+    except Exception:
+        pass
 
-        if entry_choices:
-            labels, idxs = zip(*entry_choices)
-            sel = st.selectbox("Select entry to edit/delete", labels)
-            sel_idx = idxs[labels.index(sel)]
-            selected_entry = logs[sel_idx]
-            st.markdown("**Selected entry**")
-            with st.form(key=f"edit_entry_{sel_idx}"):
-                e_date = st.date_input("Date", value=date.fromisoformat(selected_entry.get('date')))
-                e_ex = st.text_input("Exercise", value=selected_entry.get('exercise'))
-                e_weight = st.number_input("Weight", value=float(selected_entry.get('weight', 0.0)), step=1.0)
-                e_reps = st.number_input("Reps", value=int(selected_entry.get('reps', 0)), step=1)
-                e_sets = st.number_input("Sets", value=int(selected_entry.get('sets', 0)), step=1)
-                e_rpe = st.number_input("RPE", value=int(selected_entry.get('rpe', 7)), min_value=1, max_value=10, step=1)
-                submitted = st.form_submit_button("Save changes")
-                if submitted:
-                    # Update the entry in place
-                    logs[sel_idx]["date"] = e_date.isoformat()
-                    logs[sel_idx]["exercise"] = e_ex
-                    logs[sel_idx]["weight"] = float(e_weight)
-                    logs[sel_idx]["reps"] = int(e_reps)
-                    logs[sel_idx]["sets"] = int(e_sets)
-                    logs[sel_idx]["rpe"] = int(e_rpe)
-                    logs[sel_idx]["volume"] = float(e_weight) * int(e_reps) * int(e_sets)
-                    st.session_state["data"]["logs"] = logs
-                    st.success("Entry updated. Remember to Save to Drive in the sidebar to persist.")
+    st.markdown("#### History — only today's exercises")
 
-            if st.button("Delete selected entry"):
-                del logs[sel_idx]
-                st.session_state["data"]["logs"] = logs
-                st.success("Entry deleted. Remember to Save to Drive in the sidebar to persist.")
-                st.experimental_rerun()
+    # Use Streamlit's data editor for inline edit/delete if available
+    try:
+        # st.data_editor is available in newer Streamlit versions
+        edited = None
+        if hasattr(st, "data_editor"):
+            edited = st.data_editor(filtered, key="history_editor", use_container_width=True)
         else:
-            st.info("No log entries available to manage.")
+            # Fallback to experimental API
+            edited = st.experimental_data_editor(filtered, key="history_editor")
+    except Exception:
+        # Last-resort: show read-only table
+        st.dataframe(filtered, use_container_width=True, height=240)
+        edited = None
 
-        # Show progress for today's exercises across history (filter by active plan & today's exercises)
-        st.markdown("---")
-        st.subheader("Progress for today's exercises")
-        prog_logs = [l for l in logs if l.get('exercise') in todays_exs and l.get('plan') == active_plan_name]
-        if not prog_logs:
-            st.info("No historical entries found for today's exercises.")
-        else:
-            # Group by exercise
-            by_ex = {}
-            for l in prog_logs:
-                by_ex.setdefault(l.get('exercise'), []).append(l)
+    # If the user edited the table (or removed rows), update session logs accordingly
+    if edited is not None:
+        # Build remaining logs (those not part of today's exercises for this plan)
+        remaining = [l for l in logs if not (l.get("plan") == active_plan_name and l.get("exercise") in todays_exs)]
 
-            for ex, items in by_ex.items():
-                with st.expander(f"{ex} — {len(items)} entries", expanded=False):
-                    items_sorted = sorted(items, key=lambda x: (x.get('date', ''), -int(x.get('ts', 0))))
-                    for it in items_sorted:
-                        st.markdown(f"**{it.get('date')}** — Weight: {it.get('weight')} kg, Reps: {it.get('reps')}, Sets: {it.get('sets')}, RPE: {it.get('rpe')}, Volume: {it.get('volume')}")
-                        # Allow quick delete inline
-                        del_key = f"del_{it.get('ts')}_{it.get('exercise')}_{it.get('date')}"
-                        if st.button("Delete", key=del_key):
-                            logs = [le for le in logs if not (le.get('ts') == it.get('ts') and le.get('exercise') == it.get('exercise') and le.get('date') == it.get('date'))]
-                            st.session_state["data"]["logs"] = logs
-                            st.success("Entry deleted. Save to Drive to persist.")
-                            st.experimental_rerun()
+        # Convert edited DataFrame back to log dicts and ensure required fields
+        new_entries = []
+        for _, row in edited.iterrows():
+            d = row.to_dict()
+            # Ensure ts exists and is int
+            ts_val = d.get("ts")
+            if pd.isna(ts_val) or ts_val in (None, ""):
+                d["ts"] = now_ts()
+            else:
+                try:
+                    d["ts"] = int(d["ts"])
+                except Exception:
+                    d["ts"] = now_ts()
+            # Restore plan field
+            d["plan"] = active_plan_name
+            # Normalize numeric fields
+            for ncol in ["weight", "reps", "sets", "rpe", "volume", "start_ts", "end_ts", "duration_min"]:
+                if ncol in d and (pd.isna(d[ncol]) or d[ncol] is None):
+                    d[ncol] = 0 if ncol in ("reps", "sets", "rpe") else 0.0
+            new_entries.append(d)
 
-    st.dataframe(df, use_container_width=True, height=320)
+        # Combine and save back to session (user must still click Save to Drive to persist)
+        st.session_state["data"]["logs"] = remaining + new_entries
+        st.success("Changes saved to session. Click 'Save to Google Drive' in the sidebar to persist.")
 
 
 # ---------------------------------------------------------------------
