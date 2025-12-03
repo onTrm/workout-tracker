@@ -800,36 +800,67 @@ def logger_page(data):
     st.markdown("---")
     st.subheader("Training history")
 
-    if not logs:
-        st.info("No logs yet.")
-        return
-
-    df = pd.DataFrame(logs)
+    df = pd.DataFrame(logs) if logs else pd.DataFrame()
 
     # Backward compatibility: ensure columns exist
-    if "rpe" not in df.columns:
-        df["rpe"] = None
-    if "duration_min" not in df.columns:
-        df["duration_min"] = None
+    if not df.empty:
+        if "rpe" not in df.columns:
+            df["rpe"] = None
+        if "duration_min" not in df.columns:
+            df["duration_min"] = None
 
-    # Filter logs to only those for the active plan and today's exercises
-    filtered = df[(df["plan"] == active_plan_name) & (df["exercise"].isin(todays_exs))].copy()
+        # Filter logs to only those for the active plan and today's exercises
+        filtered = df[(df["plan"] == active_plan_name) & (df["exercise"].isin(todays_exs))].copy()
+    else:
+        filtered = pd.DataFrame()
 
-    # Select and rename columns for display
-    display_cols = ["exercise", "weight", "reps", "sets", "volume", "rpe", "duration_min", "plan"]
-    for col in display_cols:
-        if col not in filtered.columns:
-            filtered[col] = None
-    filtered = filtered[display_cols].copy()
-    filtered.columns = ["Exercise", "Weight", "Reps", "Sets", "Volume", "RPE", "Duration", "Plan"]
+    # Select and rename columns for display/editing
+    display_cols = ["exercise", "weight", "reps", "sets", "volume", "rpe", "duration_min"]
+    if not filtered.empty:
+        for col in display_cols:
+            if col not in filtered.columns:
+                filtered[col] = None
+        filtered = filtered[display_cols].copy()
+        filtered.columns = ["Exercise", "Weight", "Reps", "Sets", "Volume", "RPE", "Duration"]
 
-    # Sort for display
-    try:
-        filtered = filtered.sort_values(["Exercise"])
-    except Exception:
-        pass
+        # Sort for display
+        try:
+            filtered = filtered.sort_values(["Exercise"])
+        except Exception:
+            pass
+    else:
+        # Create empty DataFrame with correct columns
+        filtered = pd.DataFrame(columns=["Exercise", "Weight", "Reps", "Sets", "Volume", "RPE", "Duration"])
 
-    st.dataframe(filtered, use_container_width=True, height=240)
+    # Use data_editor for inline editing
+    edited = st.data_editor(filtered, use_container_width=True, height=240, num_rows="dynamic")
+
+    # Sync edits back to session logs
+    if edited is not None and not edited.equals(filtered):
+        # Remove old entries for this plan+today's exercises
+        remaining = [l for l in logs if not (l.get("plan") == active_plan_name and l.get("exercise") in todays_exs)]
+
+        # Convert edited rows back to log dicts
+        new_entries = []
+        for _, row in edited.iterrows():
+            if pd.isna(row.get("Exercise")) or row.get("Exercise") == "":
+                continue
+            entry = {
+                "date": log_date_iso,
+                "plan": active_plan_name,
+                "exercise": row.get("Exercise"),
+                "weight": float(row.get("Weight") or 0),
+                "reps": int(row.get("Reps") or 0),
+                "sets": int(row.get("Sets") or 0),
+                "volume": float(row.get("Volume") or 0),
+                "rpe": int(row.get("RPE") or 0),
+                "duration_min": float(row.get("Duration") or 0),
+                "ts": now_ts(),
+            }
+            new_entries.append(entry)
+
+        data["logs"] = remaining + new_entries
+        st.session_state["data"] = data
 
 
 # ---------------------------------------------------------------------
