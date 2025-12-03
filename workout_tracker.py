@@ -14,6 +14,17 @@ from datetime import date, timedelta, datetime
 
 import pandas as pd
 import streamlit as st
+import sqlite3
+import os
+import uuid
+from typing import Optional
+
+try:
+    from cryptography.fernet import Fernet
+    _FERNET_AVAILABLE = True
+except Exception:
+    Fernet = None
+    _FERNET_AVAILABLE = False
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -216,6 +227,19 @@ def ensure_google_login():
     # If still no valid creds, run OAuth flow
     if not creds or not creds.valid:
         query_params = st.experimental_get_query_params()
+        # If a persist token is present in the query params, try to load stored creds
+        persist_token = query_params.get("persist_token", [None])[0]
+        if persist_token and not creds:
+            loaded = load_creds_for_token(persist_token)
+            if loaded:
+                try:
+                    creds = Credentials.from_authorized_user_info(json.loads(loaded), SCOPES)
+                    if creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                    st.session_state["google_creds"] = json.loads(creds.to_json())
+                except Exception:
+                    creds = None
+
         if "code" in query_params:
             # Callback from Google: exchange code for tokens
             state = query_params.get("state", [None])[0]
@@ -223,7 +247,32 @@ def ensure_google_login():
             flow.fetch_token(code=query_params["code"][0])
             creds = flow.credentials
             st.session_state["google_creds"] = json.loads(creds.to_json())
-            # Clear query params (optional)
+
+            # After successful login, attempt to persist creds for this device
+            try:
+                # Generate a device token and save encrypted creds if possible
+                token = uuid.uuid4().hex
+                saved = save_creds_for_token(token, creds.to_json())
+                if saved:
+                    # Ask the browser to store the token in localStorage and reload with the token in the URL
+                    js = f"""
+                    <script>
+                    try {{
+                        localStorage.setItem('wt_persist', '{token}');
+                        const u = new URL(window.location.href);
+                        u.searchParams.set('persist_token', '{token}');
+                        // remove OAuth code/state params to avoid reprocessing
+                        u.searchParams.delete('code');
+                        u.searchParams.delete('state');
+                        window.location.replace(u.toString());
+                    }} catch(e) {{ console.warn(e); }}
+                    </script>
+                    """
+                    st.markdown(js, unsafe_allow_html=True)
+            except Exception:
+                pass
+
+            # Clear query params server-side if possible
             st.experimental_set_query_params()
         else:
             # Start login: build auth URL and show button/link
@@ -239,6 +288,20 @@ def ensure_google_login():
                 "To use this app and store your plans/logs privately in your own "
                 "Google Drive, please sign in with Google."
             )
+            # Inject a small script: if the browser has a saved token in localStorage, redirect with that token
+            pre_js = """
+                <script>
+                try {
+                    const t = localStorage.getItem('wt_persist');
+                    if (t) {
+                        const u = new URL(window.location.href);
+                        u.searchParams.set('persist_token', t);
+                        window.location.replace(u.toString());
+                    }
+                } catch(e) { console.warn(e); }
+                </script>
+            """
+            st.markdown(pre_js, unsafe_allow_html=True)
             st.markdown(f"[Sign in with Google]({auth_url})")
             st.stop()
 
@@ -253,6 +316,80 @@ def ensure_google_login():
 
 def get_drive_service(creds: Credentials):
     return build("drive", "v3", credentials=creds)
+
+
+# ---------------------------------------------------------------------
+# Encrypted credential persistence (sqlite + Fernet)
+# ---------------------------------------------------------------------
+
+DB_PATH = os.path.join(os.path.expanduser("~"), ".workout_tracker_creds.db")
+
+
+def _get_fernet() -> Optional[object]:
+    """Return a Fernet instance using `st.secrets['fernet_key']`.
+
+    If the key is not present or cryptography isn't installed, return None.
+    """
+    if not _FERNET_AVAILABLE:
+        return None
+    key = None
+    try:
+        key = st.secrets.get("fernet_key")
+    except Exception:
+        key = None
+    if not key:
+        return None
+    try:
+        return Fernet(key)
+    except Exception:
+        return None
+
+
+def init_cred_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS tokens (
+            token TEXT PRIMARY KEY,
+            creds BLOB NOT NULL
+        )"""
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_creds_for_token(token: str, creds_json: str) -> bool:
+    f = _get_fernet()
+    if f is None:
+        return False
+    init_cred_db()
+    encrypted = f.encrypt(creds_json.encode("utf-8"))
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("REPLACE INTO tokens(token, creds) VALUES (?,?)", (token, encrypted))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def load_creds_for_token(token: str) -> Optional[str]:
+    f = _get_fernet()
+    if f is None:
+        return None
+    if not os.path.exists(DB_PATH):
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT creds FROM tokens WHERE token=?", (token,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        decrypted = f.decrypt(row[0])
+        return decrypted.decode("utf-8")
+    except Exception:
+        return None
 
 
 def get_or_create_app_folder(drive_service):
