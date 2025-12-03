@@ -949,7 +949,7 @@ def logger_page(data):
     except Exception:
         pass
 
-    st.markdown("#### History — only today's exercises")
+    # st.markdown("#### History — only today's exercises")
 
     # Use Streamlit's data editor for inline edit/delete if available
     try:
@@ -1058,6 +1058,61 @@ def debug_page(data, user_info):
             st.markdown(f"- Stored device tokens: {cnt}")
         except Exception as e:
             st.markdown(f"- Stored device tokens: error ({e})")
+
+    # Token management helpers: allow restoring a token into browser localStorage
+    st.markdown("---")
+    st.subheader("Token management")
+    try:
+        tokens = []
+        if os.path.exists(DB_PATH):
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT token FROM tokens ORDER BY rowid DESC LIMIT 50")
+            rows = cur.fetchall()
+            conn.close()
+            tokens = [r[0] for r in rows if r and r[0]]
+    except Exception:
+        tokens = []
+
+    if not tokens:
+        st.markdown("No stored tokens available on the server.")
+    else:
+        # Present short labels but keep full token for actions
+        labels = [t[:8] + '...' for t in tokens]
+        sel_i = st.selectbox("Select stored token (server)", range(len(tokens)), format_func=lambda i: labels[i])
+        sel_token = tokens[sel_i]
+
+        if st.button("Restore selected token to browser localStorage"):
+            # Inject JS to set localStorage and reload — token is sensitive so only set here
+            js_token = json.dumps(sel_token)
+            js = f"""
+            <script>
+            try {{
+                localStorage.setItem('wt_persist', {js_token});
+                // reload so app reads the token
+                window.location.reload();
+            }} catch(e) {{ console.warn(e); }}
+            </script>
+            """
+            st.markdown(js, unsafe_allow_html=True)
+
+        if st.button("Delete selected token from server and clear localStorage"):
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cur = conn.cursor()
+                cur.execute("DELETE FROM tokens WHERE token=?", (sel_token,))
+                conn.commit()
+                conn.close()
+                st.success("Token removed from server. Clearing localStorage and reloading...")
+            except Exception as e:
+                st.error(f"Failed to remove token: {e}")
+            # Clear client localStorage as well
+            clear_js = """
+            <script>
+            try { localStorage.removeItem('wt_persist'); window.location.reload(); } catch(e) { console.warn(e); }
+            </script>
+            """
+            st.markdown(clear_js, unsafe_allow_html=True)
 
     # Session flags
     st.markdown("**Session state**")
