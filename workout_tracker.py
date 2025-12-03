@@ -1132,6 +1132,26 @@ def main():
     st.set_page_config(page_title="Workout Tracker (Drive-backed)", layout="wide")
     apply_custom_style()
 
+    # Early client-side redirect: if the browser has a stored device token in
+    # localStorage (`wt_persist`) but the URL doesn't include `persist_token`,
+    # add it and reload. This ensures a full browser reload will still provide
+    # the token to the server so credentials can be rehydrated.
+    early_js = """
+    <script>
+    try {
+        const u = new URL(window.location.href);
+        if (!u.searchParams.get('persist_token')) {
+            const t = localStorage.getItem('wt_persist');
+            if (t) {
+                u.searchParams.set('persist_token', t);
+                window.location.replace(u.toString());
+            }
+        }
+    } catch(e) { console.warn(e); }
+    </script>
+    """
+    st.markdown(early_js, unsafe_allow_html=True)
+
     creds, user_info = ensure_google_login()
     drive_service = get_drive_service(creds)
 
