@@ -24,3 +24,6 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local-only AI assistant instructions (not for repo)
+.github/copilot-instructions.md
