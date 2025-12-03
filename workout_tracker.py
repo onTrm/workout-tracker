@@ -14,17 +14,6 @@ from datetime import date, timedelta, datetime
 
 import pandas as pd
 import streamlit as st
-import sqlite3
-import os
-import uuid
-from typing import Optional
-
-try:
-    from cryptography.fernet import Fernet
-    _FERNET_AVAILABLE = True
-except Exception:
-    Fernet = None
-    _FERNET_AVAILABLE = False
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -32,7 +21,6 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
-import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------------
 # Configuration
@@ -228,18 +216,6 @@ def ensure_google_login():
     # If still no valid creds, run OAuth flow
     if not creds or not creds.valid:
         query_params = st.experimental_get_query_params()
-        # If a persist token is present in the query params, try to load stored creds
-        persist_token = query_params.get("persist_token", [None])[0]
-        if persist_token and not creds:
-            loaded = load_creds_for_token(persist_token)
-            if loaded:
-                try:
-                    creds = Credentials.from_authorized_user_info(json.loads(loaded), SCOPES)
-                    if creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
-                    st.session_state["google_creds"] = json.loads(creds.to_json())
-                except Exception:
-                    creds = None
 
         if "code" in query_params:
             code_val = query_params["code"][0]
@@ -256,15 +232,8 @@ def ensure_google_login():
                     creds = flow.credentials
                     st.session_state["google_creds"] = json.loads(creds.to_json())
                     st.session_state["_processed_code"] = code_val  # mark as processed
-
                     # Clear query params immediately to prevent reuse on rerun
                     st.experimental_set_query_params()
-
-                    # Persist creds for this device
-                    token = uuid.uuid4().hex
-                    saved = save_creds_for_token(token, creds.to_json())
-                    if saved:
-                        st.session_state["_device_token"] = token
                 except Exception as e:
                     # Code already used or invalid; clear params and show login
                     st.experimental_set_query_params()
@@ -284,37 +253,10 @@ def ensure_google_login():
                 "To use this app and store your plans/logs privately in your own "
                 "Google Drive, please sign in with Google."
             )
-            # Use components.html for reliable JS execution on Streamlit Cloud
-            pre_js_html = """
-            <script>
-            try {
-                const t = window.parent.localStorage.getItem('wt_persist');
-                if (t) {
-                    const u = new URL(window.parent.location.href);
-                    u.searchParams.set('persist_token', t);
-                    window.parent.location.replace(u.toString());
-                }
-            } catch(e) { console.warn(e); }
-            </script>
-            """
-            components.html(pre_js_html, height=0)
             st.markdown(f"[Sign in with Google]({auth_url})")
             st.stop()
 
     # At this point we have valid creds
-    # If we just saved a device token, inject it into browser localStorage
-    device_token = st.session_state.get("_device_token")
-    if device_token:
-        js_html = f"""
-        <script>
-        try {{
-            window.parent.localStorage.setItem('wt_persist', '{device_token}');
-        }} catch(e) {{ console.warn('wt_persist save failed', e); }}
-        </script>
-        """
-        components.html(js_html, height=0)
-        del st.session_state["_device_token"]  # only inject once
-
     user_info = get_user_info(creds)
     return creds, user_info
 
@@ -325,80 +267,6 @@ def ensure_google_login():
 
 def get_drive_service(creds: Credentials):
     return build("drive", "v3", credentials=creds)
-
-
-# ---------------------------------------------------------------------
-# Encrypted credential persistence (sqlite + Fernet)
-# ---------------------------------------------------------------------
-
-DB_PATH = os.path.join(os.path.expanduser("~"), ".workout_tracker_creds.db")
-
-
-def _get_fernet() -> Optional[object]:
-    """Return a Fernet instance using `st.secrets['fernet_key']`.
-
-    If the key is not present or cryptography isn't installed, return None.
-    """
-    if not _FERNET_AVAILABLE:
-        return None
-    key = None
-    try:
-        key = st.secrets.get("fernet_key")
-    except Exception:
-        key = None
-    if not key:
-        return None
-    try:
-        return Fernet(key)
-    except Exception:
-        return None
-
-
-def init_cred_db():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS tokens (
-            token TEXT PRIMARY KEY,
-            creds BLOB NOT NULL
-        )"""
-    )
-    conn.commit()
-    conn.close()
-
-
-def save_creds_for_token(token: str, creds_json: str) -> bool:
-    f = _get_fernet()
-    if f is None:
-        return False
-    init_cred_db()
-    encrypted = f.encrypt(creds_json.encode("utf-8"))
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("REPLACE INTO tokens(token, creds) VALUES (?,?)", (token, encrypted))
-    conn.commit()
-    conn.close()
-    return True
-
-
-def load_creds_for_token(token: str) -> Optional[str]:
-    f = _get_fernet()
-    if f is None:
-        return None
-    if not os.path.exists(DB_PATH):
-        return None
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT creds FROM tokens WHERE token=?", (token,))
-    row = cur.fetchone()
-    conn.close()
-    if not row:
-        return None
-    try:
-        decrypted = f.decrypt(row[0])
-        return decrypted.decode("utf-8")
-    except Exception:
-        return None
 
 
 def get_or_create_app_folder(drive_service):
@@ -938,71 +806,30 @@ def logger_page(data):
 
     df = pd.DataFrame(logs)
 
-    # Backward compatibility: ensure columns exist and prepare filtered history
+    # Backward compatibility: ensure columns exist
     if "rpe" not in df.columns:
         df["rpe"] = None
-
-    # Ensure common columns exist
-    for col in ["date", "exercise", "weight", "reps", "sets", "rpe", "volume", "ts", "start_ts", "end_ts", "duration_min", "plan"]:
-        if col not in df.columns:
-            df[col] = None
+    if "duration_min" not in df.columns:
+        df["duration_min"] = None
 
     # Filter logs to only those for the active plan and today's exercises
     filtered = df[(df["plan"] == active_plan_name) & (df["exercise"].isin(todays_exs))].copy()
-    if "plan" in filtered.columns:
-        filtered = filtered.drop(columns=["plan"])
+
+    # Select and rename columns for display
+    display_cols = ["exercise", "weight", "reps", "sets", "volume", "rpe", "duration_min", "plan"]
+    for col in display_cols:
+        if col not in filtered.columns:
+            filtered[col] = None
+    filtered = filtered[display_cols].copy()
+    filtered.columns = ["Exercise", "Weight", "Reps", "Sets", "Volume", "RPE", "Duration", "Plan"]
 
     # Sort for display
     try:
-        filtered = filtered.sort_values(["date", "exercise"])
+        filtered = filtered.sort_values(["Exercise"])
     except Exception:
         pass
 
-    # st.markdown("#### History — only today's exercises")
-
-    # Use Streamlit's data editor for inline edit/delete if available
-    try:
-        # st.data_editor is available in newer Streamlit versions
-        edited = None
-        if hasattr(st, "data_editor"):
-            edited = st.data_editor(filtered, key="history_editor", use_container_width=True)
-        else:
-            # Fallback to experimental API
-            edited = st.experimental_data_editor(filtered, key="history_editor")
-    except Exception:
-        # Last-resort: show read-only table
-        st.dataframe(filtered, use_container_width=True, height=240)
-        edited = None
-
-    # If the user edited the table (or removed rows), update session logs accordingly
-    if edited is not None:
-        # Build remaining logs (those not part of today's exercises for this plan)
-        remaining = [l for l in logs if not (l.get("plan") == active_plan_name and l.get("exercise") in todays_exs)]
-
-        # Convert edited DataFrame back to log dicts and ensure required fields
-        new_entries = []
-        for _, row in edited.iterrows():
-            d = row.to_dict()
-            # Ensure ts exists and is int
-            ts_val = d.get("ts")
-            if pd.isna(ts_val) or ts_val in (None, ""):
-                d["ts"] = now_ts()
-            else:
-                try:
-                    d["ts"] = int(d["ts"])
-                except Exception:
-                    d["ts"] = now_ts()
-            # Restore plan field
-            d["plan"] = active_plan_name
-            # Normalize numeric fields
-            for ncol in ["weight", "reps", "sets", "rpe", "volume", "start_ts", "end_ts", "duration_min"]:
-                if ncol in d and (pd.isna(d[ncol]) or d[ncol] is None):
-                    d[ncol] = 0 if ncol in ("reps", "sets", "rpe") else 0.0
-            new_entries.append(d)
-
-        # Combine and save back to session (user must still click Save to Drive to persist)
-        st.session_state["data"]["logs"] = remaining + new_entries
-        st.success("Changes saved to session. Click 'Save to Google Drive' in the sidebar to persist.")
+    st.dataframe(filtered, use_container_width=True, height=240)
 
 
 # ---------------------------------------------------------------------
@@ -1018,115 +845,12 @@ def debug_page(data, user_info):
     st.markdown("### In-memory data")
     st.json(data)
 
-    # Runtime diagnostics (non-sensitive)
-    st.markdown("---")
-    st.subheader("Runtime diagnostics")
-    # Packages
-    try:
-        import streamlit as _st_mod
-        st_ver = getattr(_st_mod, "__version__", "unknown")
-    except Exception:
-        st_ver = "unknown"
-    try:
-        import cryptography as _crypt
-        crypt_ver = getattr(_crypt, "__version__", "unknown")
-    except Exception:
-        crypt_ver = None
-
-    st.markdown("**Packages**")
-    st.markdown(f"- streamlit: {st_ver}")
-    st.markdown(f"- cryptography: {crypt_ver if crypt_ver else 'missing'}")
-
-    # Fernet availability and secrets presence (do not print secrets)
-    try:
-        f_ok = _get_fernet() is not None
-    except Exception:
-        f_ok = False
-    st.markdown("**Fernet / credential persistence**")
-    st.markdown(f"- Fernet available: {f_ok}")
-    try:
-        key_present = bool(st.secrets.get('fernet_key', None))
-    except Exception:
-        key_present = False
-    st.markdown(f"- Fernet key present in secrets: {key_present}")
-
-    # DB status
-    try:
-        db_exists = os.path.exists(DB_PATH)
-    except Exception:
-        db_exists = False
-    st.markdown("**Credential DB**")
-    st.markdown(f"- DB file exists: {db_exists}")
-    if db_exists:
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("SELECT count(1) FROM tokens")
-            cnt = cur.fetchone()[0]
-            conn.close()
-            st.markdown(f"- Stored device tokens: {cnt}")
-        except Exception as e:
-            st.markdown(f"- Stored device tokens: error ({e})")
-
-    # Token management helpers: allow restoring a token into browser localStorage
-    st.markdown("---")
-    st.subheader("Token management")
-    try:
-        tokens = []
-        if os.path.exists(DB_PATH):
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("SELECT token FROM tokens ORDER BY rowid DESC LIMIT 50")
-            rows = cur.fetchall()
-            conn.close()
-            tokens = [r[0] for r in rows if r and r[0]]
-    except Exception:
-        tokens = []
-
-    if not tokens:
-        st.markdown("No stored tokens available on the server.")
-    else:
-        # Present short labels but keep full token for actions
-        labels = [t[:8] + '...' for t in tokens]
-        sel_i = st.selectbox("Select stored token (server)", range(len(tokens)), format_func=lambda i: labels[i])
-        sel_token = tokens[sel_i]
-
-        if st.button("Restore selected token to browser localStorage"):
-            js_token = json.dumps(sel_token)
-            js_html = f"""
-            <script>
-            try {{
-                window.parent.localStorage.setItem('wt_persist', {js_token});
-                window.parent.location.reload();
-            }} catch(e) {{ console.warn(e); }}
-            </script>
-            """
-            components.html(js_html, height=0)
-
-        if st.button("Delete selected token from server and clear localStorage"):
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                cur = conn.cursor()
-                cur.execute("DELETE FROM tokens WHERE token=?", (sel_token,))
-                conn.commit()
-                conn.close()
-                st.success("Token removed from server. Clearing localStorage and reloading...")
-            except Exception as e:
-                st.error(f"Failed to remove token: {e}")
-            # Clear client localStorage as well
-            clear_js_html = """
-            <script>
-            try { window.parent.localStorage.removeItem('wt_persist'); window.parent.location.reload(); } catch(e) { console.warn(e); }
-            </script>
-            """
-            components.html(clear_js_html, height=0)
-
     # Session flags
+    st.markdown("---")
     st.markdown("**Session state**")
     ss = {
         "has_google_creds": "google_creds" in st.session_state,
         "data_file_id": st.session_state.get("data_file_id"),
-        "wt_persist_in_session": bool(st.session_state.get("oauth_state")),
     }
     st.json(ss)
 
@@ -1138,26 +862,6 @@ def debug_page(data, user_info):
 def main():
     st.set_page_config(page_title="Workout Tracker (Drive-backed)", layout="wide")
     apply_custom_style()
-
-    # Early client-side redirect: if the browser has a stored device token in
-    # localStorage (`wt_persist`) but the URL doesn't include `persist_token`,
-    # add it and reload. This ensures a full browser reload will still provide
-    # the token to the server so credentials can be rehydrated.
-    early_js_html = """
-    <script>
-    try {
-        const u = new URL(window.parent.location.href);
-        if (!u.searchParams.get('persist_token')) {
-            const t = window.parent.localStorage.getItem('wt_persist');
-            if (t) {
-                u.searchParams.set('persist_token', t);
-                window.parent.location.replace(u.toString());
-            }
-        }
-    } catch(e) { console.warn(e); }
-    </script>
-    """
-    components.html(early_js_html, height=0)
 
     creds, user_info = ensure_google_login()
     drive_service = get_drive_service(creds)
