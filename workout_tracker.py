@@ -1009,6 +1009,65 @@ def debug_page(data, user_info):
     st.markdown("### In-memory data")
     st.json(data)
 
+    # Runtime diagnostics (non-sensitive)
+    st.markdown("---")
+    st.subheader("Runtime diagnostics")
+    # Packages
+    try:
+        import streamlit as _st_mod
+        st_ver = getattr(_st_mod, "__version__", "unknown")
+    except Exception:
+        st_ver = "unknown"
+    try:
+        import cryptography as _crypt
+        crypt_ver = getattr(_crypt, "__version__", "unknown")
+    except Exception:
+        crypt_ver = None
+
+    st.markdown("**Packages**")
+    st.markdown(f"- streamlit: {st_ver}")
+    st.markdown(f"- cryptography: {crypt_ver if crypt_ver else 'missing'}")
+
+    # Fernet availability and secrets presence (do not print secrets)
+    try:
+        f_ok = _get_fernet() is not None
+    except Exception:
+        f_ok = False
+    st.markdown("**Fernet / credential persistence**")
+    st.markdown(f"- Fernet available: {f_ok}")
+    try:
+        key_present = bool(st.secrets.get('fernet_key', None))
+    except Exception:
+        key_present = False
+    st.markdown(f"- Fernet key present in secrets: {key_present}")
+
+    # DB status
+    try:
+        db_exists = os.path.exists(DB_PATH)
+    except Exception:
+        db_exists = False
+    st.markdown("**Credential DB**")
+    st.markdown(f"- DB file exists: {db_exists}")
+    if db_exists:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT count(1) FROM tokens")
+            cnt = cur.fetchone()[0]
+            conn.close()
+            st.markdown(f"- Stored device tokens: {cnt}")
+        except Exception as e:
+            st.markdown(f"- Stored device tokens: error ({e})")
+
+    # Session flags
+    st.markdown("**Session state**")
+    ss = {
+        "has_google_creds": "google_creds" in st.session_state,
+        "data_file_id": st.session_state.get("data_file_id"),
+        "wt_persist_in_session": bool(st.session_state.get("oauth_state")),
+    }
+    st.json(ss)
+
 
 # ---------------------------------------------------------------------
 # Main
